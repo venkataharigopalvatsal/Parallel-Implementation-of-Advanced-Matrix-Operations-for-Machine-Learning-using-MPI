@@ -1,0 +1,2 @@
+# Parallel-Implementation-of-Advanced-Matrix-Operations-for-Machine-Learning-using-MPI
+This project explores the use of MPI for parallelizing advanced matrix operations that are fundamental to machine learning algorithms. The implementation will include operations such as matrix multiplication, if possible other advanced matrix operations such as covariance matrix computation, and eigenvalue decomposition (used in PCA). 
