@@ -1,171 +1,98 @@
 #include <stdio.h>
-#include <time.h>
 #include <stdlib.h>
+#include <time.h>
 #include <stdbool.h>
 #include "mpi.h"
 
-// Size of the matrix (NxN)
 #define N 64
-
-MPI_Status status;
-
-// Whether to print the matrix when completed
 bool printResults = true;
 
-// Print matrix function declaration
 void printMatrix(int matrix[N][N]);
 
-// Define matrices
-int matrix1[N][N];
-int matrix2[N][N];
-int productMatrix[N][N];
+int main(int argc, char **argv) {
+    int matrix1[N][N], matrix2[N][N], productMatrix[N][N];
+    int i, j, k;
 
-// Counter variables
-int i, j, k;
-
-int main(int argc, char **argv)
-{
-    int numberOfProcessors;
-    int processorRank;
-    int numberOfWorkers;
-
-    // Processor sending data
-    int sourceProcessor;
-
-    // Processor to receive data
-    int destinationProcessor;
-
-    // The number of rows for a worker processor to process
-    int rows;
-
-    // The subset of a matrix to be processed by workers
-    int matrixSubset;
-
-    // Initialize MPI environment
     MPI_Init(&argc, &argv);
 
-    // Determine number of processors available
-    MPI_Comm_size(MPI_COMM_WORLD, &numberOfProcessors);
+    int num_procs, rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    // Determine rank of calling process
-    MPI_Comm_rank(MPI_COMM_WORLD, &processorRank);
+    int num_workers = num_procs - 1;
 
-    numberOfWorkers = numberOfProcessors - 1;
-
-    /* ---------- Manager Processor Code ---------- */
-
-    if (processorRank == 0)
-    {
-        // Initialize a timer
-        clock_t begin = clock();
-
-        printf("\nMultiplying a %dx%d matrix using %d processor(s).\n\n", N, N, numberOfProcessors);
-
-        // Populate the matrices with values
+    if (rank == 0) {
+        // Initialize matrices
+        srand(time(NULL));
         for (i = 0; i < N; i++)
-        {
-            for (j = 0; j < N; j++)
-            {
+            for (j = 0; j < N; j++) {
                 matrix1[i][j] = (rand() % 6) + 1;
                 matrix2[i][j] = (rand() % 6) + 1;
             }
+
+        int num_rows = N / num_workers;
+        int offset = 0;
+
+        clock_t begin = clock();
+        printf("Multiplying %dx%d matrix using %d processors...\n\n", N, N, num_procs);
+
+        // Send chunks of A and full B to workers
+        for (int dest = 1; dest <= num_workers; dest++) {
+            MPI_Send(&offset, 1, MPI_INT, dest, 1, MPI_COMM_WORLD);
+            MPI_Send(&num_rows, 1, MPI_INT, dest, 1, MPI_COMM_WORLD);
+            MPI_Send(&matrix1[offset][0], num_rows * N, MPI_INT, dest, 1, MPI_COMM_WORLD);
+            MPI_Send(&matrix2[0][0], N * N, MPI_INT, dest, 1, MPI_COMM_WORLD);
+            offset += num_rows;
         }
 
-        /* Send the matrix to the worker processes */
-        rows = N / numberOfWorkers;
-        matrixSubset = 0;
-
-        // Iterate through all of the workers and assign work
-        for (destinationProcessor = 1; destinationProcessor <= numberOfWorkers; destinationProcessor++)
-        {
-            // Determine the subset of the matrix to send to the destination processor
-            MPI_Send(&matrixSubset, 1, MPI_INT, destinationProcessor, 1, MPI_COMM_WORLD);
-
-            // Send the number of rows to process to the destination worker processor
-            MPI_Send(&rows, 1, MPI_INT, destinationProcessor, 1, MPI_COMM_WORLD);
-
-            // Send rows from matrix 1 to destination worker processor
-            MPI_Send(&matrix1[matrixSubset][0], rows * N, MPI_INT, destinationProcessor, 1, MPI_COMM_WORLD);
-
-            // Send entire matrix 2 to destination worker processor
-            MPI_Send(&matrix2, N * N, MPI_INT, destinationProcessor, 1, MPI_COMM_WORLD);
-
-            // Determine the next chunk of data to send to the next processor
-            matrixSubset = matrixSubset + rows;
+        // Receive results from workers
+        for (int source = 1; source <= num_workers; source++) {
+            int recv_offset, rows;
+            MPI_Recv(&recv_offset, 1, MPI_INT, source, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            MPI_Recv(&rows, 1, MPI_INT, source, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            MPI_Recv(&productMatrix[recv_offset][0], rows * N, MPI_INT, source, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
 
-        // Retrieve results from all workers processors
-        for (i = 1; i <= numberOfWorkers; i++)
-        {
-            sourceProcessor = i;
-            MPI_Recv(&matrixSubset, 1, MPI_INT, sourceProcessor, 2, MPI_COMM_WORLD, &status);
-            MPI_Recv(&rows, 1, MPI_INT, sourceProcessor, 2, MPI_COMM_WORLD, &status);
-            MPI_Recv(&productMatrix[matrixSubset][0], rows * N, MPI_INT, sourceProcessor, 2, MPI_COMM_WORLD, &status);
-        }
-
-        // Stop the timer
         clock_t end = clock();
-
-        // Optionally print  matrix results
-        if (printResults == true)
-        {
-            printf("Matrix 1:\n");
-            printMatrix(matrix1);
-            printf("Matrix 2:\n");
-            printMatrix(matrix2);
-            printf("Product Matrix:\n");
-            printMatrix(productMatrix);
+        if (printResults) {
+            printf("Matrix 1:\n"); printMatrix(matrix1);
+            printf("Matrix 2:\n"); printMatrix(matrix2);
+            printf("Product Matrix:\n"); printMatrix(productMatrix);
         }
+        printf("Runtime: %f seconds\n", (double)(end - begin) / CLOCKS_PER_SEC);
+    } else {
+        // Worker processes
+        int offset, num_rows;
+        MPI_Recv(&offset, 1, MPI_INT, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(&num_rows, 1, MPI_INT, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-        // Determine and print the total run time
-        double runTime = (double)(end - begin) / CLOCKS_PER_SEC;
-        printf("Runtime: %f seconds\n", runTime);
-    }
+        int subMatrix[num_rows][N];
+        MPI_Recv(&subMatrix, num_rows * N, MPI_INT, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-    /* ---------- Worker Processor Code ---------- */
+        int matrix2_full[N][N];
+        MPI_Recv(&matrix2_full, N * N, MPI_INT, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-    if (processorRank > 0)
-    {
-        sourceProcessor = 0;
-        MPI_Recv(&matrixSubset, 1, MPI_INT, sourceProcessor, 1, MPI_COMM_WORLD, &status);
-        MPI_Recv(&rows, 1, MPI_INT, sourceProcessor, 1, MPI_COMM_WORLD, &status);
-        MPI_Recv(&matrix1, rows * N, MPI_INT, sourceProcessor, 1, MPI_COMM_WORLD, &status);
-        MPI_Recv(&matrix2, N * N, MPI_INT, sourceProcessor, 1, MPI_COMM_WORLD, &status);
-
-        /* Perform matrix multiplication */
-        for (k = 0; k < N; k++)
-        {
-            for (i = 0; i < rows; i++)
-            {
-                productMatrix[i][k] = 0.0;
-                for (j = 0; j < N; j++)
-                {
-                    productMatrix[i][k] = productMatrix[i][k] + matrix1[i][j] * matrix2[j][k];
-                }
+        int subProduct[num_rows][N];
+        for (i = 0; i < num_rows; i++)
+            for (j = 0; j < N; j++) {
+                subProduct[i][j] = 0;
+                for (k = 0; k < N; k++)
+                    subProduct[i][j] += subMatrix[i][k] * matrix2_full[k][j];
             }
-        }
 
-        MPI_Send(&matrixSubset, 1, MPI_INT, 0, 2, MPI_COMM_WORLD);
-        MPI_Send(&rows, 1, MPI_INT, 0, 2, MPI_COMM_WORLD);
-        MPI_Send(&productMatrix, rows * N, MPI_INT, 0, 2, MPI_COMM_WORLD);
+        MPI_Send(&offset, 1, MPI_INT, 0, 2, MPI_COMM_WORLD);
+        MPI_Send(&num_rows, 1, MPI_INT, 0, 2, MPI_COMM_WORLD);
+        MPI_Send(&subProduct, num_rows * N, MPI_INT, 0, 2, MPI_COMM_WORLD);
     }
 
     MPI_Finalize();
+    return 0;
 }
 
-/**
- * @brief Prints the contents of an NxN matrix
- * 
- * @param matrix An NxN matrix of integers
- */
-void printMatrix(int matrix[N][N])
-{
-    for (i = 0; i < N; i++)
-    {
-        for (j = 0; j < N; j++)
-        {
+void printMatrix(int matrix[N][N]) {
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < N; j++)
             printf("%d\t", matrix[i][j]);
-        }
         printf("\n");
     }
     printf("\n");
